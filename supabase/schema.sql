@@ -187,7 +187,7 @@ language plpgsql security definer set search_path = public as $$
 declare n int; code text; made text[] := '{}'; s text := regexp_replace(trim(p_school), '\s+', '', 'g');
 begin
   if s = '' or s like '%-%' or s not like '%학교' then
-    raise exception '학교 이름은 "송안초등학교"처럼 전체 이름으로, 띄어쓰기와 - 없이 적어 주세요.';
+    raise exception '학교 이름은 "행복초등학교"처럼 전체 이름으로, 띄어쓰기와 - 없이 적어 주세요.';
   end if;
   if p_grade is null or p_grade < 1 or p_grade > 6 then raise exception '학년은 1~6 사이 숫자예요.'; end if;
   if p_classes is null or array_length(p_classes, 1) is null then raise exception '반을 하나 이상 골라 주세요.'; end if;

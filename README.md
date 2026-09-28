@@ -1,4 +1,4 @@
-# 영어 쓰기 교실 — 설치 안내
+# 오늘의 영어 쓰기 (Today's English Writing) — 설치 안내
 
 학생(`/`), 교사(`/teacher`), 관리자(`/admin`) 세 화면이 있는 영어 쓰기 웹앱입니다.
 넷리파이(무료) + Supabase(무료) + Gemini(무료 키) + Unsplash(선택, 무료)로 돌아갑니다.
@@ -11,11 +11,12 @@
 | `netlify/functions/api.js` | 서버 함수: Gemini AI(대화·단어·예시 문장·첨삭), Unsplash 사진 검색 |
 | `netlify.toml` | 넷리파이 설정 (`/teacher`, `/admin` 주소 연결) |
 | `supabase/schema.sql` | 데이터베이스 표·보안 함수·사진 저장소를 한 번에 만드는 SQL |
+| `supabase/update-v2.sql` | v2 기능(교사 단원, 여러 학년 학급, 첨삭→다듬기→게시, 의견함)을 더하는 SQL. `schema.sql` 다음에 실행 |
 
 ## 1. Supabase 준비 (10분)
 
 1. **새 Supabase 프로젝트**를 만드세요. 이미 쓰는 프로젝트에 `submissions` 같은 같은 이름의 표가 있으면 충돌할 수 있어서 새 프로젝트를 권해요.
-2. 왼쪽 메뉴 **SQL Editor → New query**에 `supabase/schema.sql` 내용을 전부 붙여 넣고 **Run**.
+2. 왼쪽 메뉴 **SQL Editor → New query**에 `supabase/schema.sql` 내용을 전부 붙여 넣고 **Run**. 이어서 `supabase/update-v2.sql`도 같은 방법으로 **Run**.
    `Success. No rows returned`가 나오면 끝입니다.
 3. **Project Settings → API Keys**에서 세 가지를 메모하세요.
    - Project URL (예: `https://abcd.supabase.co`)
@@ -51,10 +52,10 @@ SUPABASE_ANON_KEY: 'anon 또는 publishable 키',
 ## 4. 처음 쓰는 순서
 
 1. `내사이트주소/admin` → 마스터 PIN **1234**로 로그인 → ⚙️ 설정에서 **PIN부터 바꾸기**. 교사 가입 코드(기본 `teacher2026`)도 확인·변경.
-2. `내사이트주소/teacher` → "처음 오셨나요?"에서 가입 코드, 학교 이름(예: 송안초등학교), 학년, 반을 골라 학급 만들기.
+2. `내사이트주소/teacher` → "처음 오셨나요?"에서 가입 코드, 학교 이름(예: 행복초등학교), 학년, 반을 골라 학급 만들기.
 3. 🔑 AI 키 등록 → Google AI Studio에서 키 발급 → 등록 → "모든 학급에 이 키 공유".
 4. 🛠️ 교사 관리 → 학습 활동 설정(주제, AI 대화 가이드, 핵심 표현, 단어, 평가 기준) 저장.
-5. 학생에게 `내사이트주소`와 학급 코드(예: `송안초등학교-5-1`)를 알려 주면 끝.
+5. 학생에게 `내사이트주소`와 학급 코드(예: `행복초등학교-5-1`)를 알려 주면 끝.
 
 ## 문제가 생기면
 
