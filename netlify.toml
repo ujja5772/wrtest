@@ -1,0 +1,14 @@
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# /teacher, /admin 주소로 바로 들어와도 앱이 열리게 합니다.
+[[redirects]]
+  from = "/teacher"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/admin"
+  to = "/index.html"
+  status = 200
