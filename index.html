@@ -887,11 +887,20 @@ const St = {
         const html = parts.map((p, bi) => esc(p) + (bi < parts.length - 1
           ? `<input type="text" data-s="${si}" data-b="${bi}" value="${attr((d.values[si] || [])[bi] || '')}" oninput="St.blank(this)" aria-label="빈칸" autocomplete="off" spellcheck="false">` : '')).join('');
         const hint = (s.answer || []).filter(Boolean).join(', ');
-        return `<div class="sent"><div class="en"><b style="font-family:var(--font-head);font-weight:400;color:var(--ink-soft)">${si + 1}.</b> ${html} ${sayBtn(s.template)}</div>
+        return `<div class="sent"><div class="en"><b style="font-family:var(--font-head);font-weight:400;color:var(--ink-soft)">${si + 1}.</b> ${html} <button class="iconbtn" title="듣기" aria-label="문장 듣기" onclick="St.sayHint(${si})">🔊</button></div>
           <div class="small">${esc(s.ko || '')} ${hint ? `<button class="iconbtn small" data-h="${attr(hint)}" onclick="this.replaceWith('💡 ' + this.dataset.h)">💡 힌트</button>` : ''}</div></div>`;
       }).join('')}</div>
       <div class="row" style="margin-top:12px"><button class="btn green" onclick="St.hintsToDraft()">📥 완성한 문장을 초안에 담기</button>
         <span class="small">빈칸을 다 채운 문장만 담겨요.</span></div>`;
+  },
+  // 빈칸을 내가 쓴 말(없으면 힌트 낱말)로 채운 온전한 문장으로 읽어 줘요
+  sayHint(si) {
+    const d = LS.get(this.k('hints')); if (!d) return;
+    const s = d.sentences[si]; const vals = d.values[si] || [];
+    const parts = s.template.split('____');
+    const text = parts.map((p, bi) => p + (bi < parts.length - 1 ? (String(vals[bi] || '').trim() || (s.answer || [])[bi] || '') : '')).join('')
+      .replace(/\s+([.,!?])/g, '$1').replace(/\s{2,}/g, ' ');
+    speak(text);
   },
   blank(el) {
     const d = LS.get(this.k('hints')); if (!d) return;
