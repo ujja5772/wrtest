@@ -189,8 +189,9 @@ textarea.paper:focus { border-color: var(--ink); }
 
 /* 첨삭 */
 .good { font-weight: 700; color: #122A4D; background: #E7F0FF; border-radius: 4px; padding: 0 2px; }
-.fix { font-weight: 700; color: var(--red); }
-.fix s { opacity: .75; }
+.fix { color: var(--red); font-weight: 700; }
+.fix s { text-decoration-thickness: 2px; }
+.fixto { color: var(--leaf); font-weight: 700; }
 .grade { display: inline-grid; place-items: center; width: 58px; height: 58px; border-radius: 50%; font-family: var(--font-head); font-size: 1.6rem; border: 4px solid; }
 .grade.g상 { color: var(--leaf); border-color: var(--leaf); }
 .grade.g중 { color: var(--pencil-dark); border-color: var(--pencil-dark); }
@@ -428,8 +429,24 @@ function plain(s) {
 function annotatedHtml(s) {
   return esc(s)
     .replace(/\[\[good:([\s\S]*?)\]\]/g, '<strong class="good">$1</strong>')
-    .replace(/\[\[fix:([\s\S]*?)=&gt;([\s\S]*?)\]\]/g, '<strong class="fix"><s>$1</s> → $2</strong>')
-    .replace(/\[\[fix:([\s\S]*?)\]\]/g, '<strong class="fix">$1</strong>');
+    .replace(/\[\[fix:([\s\S]*?)=&gt;([\s\S]*?)\]\]/g, '<span class="fix"><s>$1</s> → <b class="fixto">$2</b></span>')
+    .replace(/\[\[fix:([\s\S]*?)\]\]/g, '<span class="fix"><s>$1</s></span>');
+}
+// 예전 첨삭처럼 본문에 표시가 없으면, '고칠 점' 목록을 보고 본문에 빨간 표시를 입혀요
+function withFixMarks(fb) {
+  let text = String(fb.annotated || '');
+  if (/\[\[(good|fix):/.test(text) || !(fb.fixes || []).length) return text;
+  const lower = text.toLowerCase(); const spans = [];
+  (fb.fixes || []).forEach((f) => {
+    const w = String(f.wrong || ''); if (!w) return;
+    let i = lower.indexOf(w.toLowerCase());
+    while (i !== -1 && spans.some((x) => i < x.e && i + w.length > x.s)) i = lower.indexOf(w.toLowerCase(), i + 1);
+    if (i !== -1) spans.push({ s: i, e: i + w.length, r: f.right });
+  });
+  spans.sort((a, b) => a.s - b.s);
+  let out = '', pos = 0;
+  spans.forEach((x) => { out += text.slice(pos, x.s) + `[[fix:${text.slice(x.s, x.e)}=>${x.r}]]`; pos = x.e; });
+  return out + text.slice(pos);
 }
 // opt.grade: 교사 화면에서만 넘김 / opt.rewrite: 고쳐 쓴 글 보이기
 function feedbackHtml(fb, opt = {}) {
@@ -439,12 +456,12 @@ function feedbackHtml(fb, opt = {}) {
       ${opt.grade ? `<div class="grade g${esc(opt.grade)}" aria-label="평가 ${esc(opt.grade)}">${esc(opt.grade)}</div>` : ''}
       <div class="grow">
         ${fb.cheer ? `<p style="font-size:1.1rem"><b>${esc(fb.cheer)}</b></p>` : ''}
-        <p class="small muted" style="margin:0"><strong class="good">굵은 글씨</strong>는 잘한 부분, <strong class="fix">빨간 글씨</strong>는 고칠 부분이에요.</p>
+        <p class="small" style="margin:0"><strong class="good">파란 바탕 굵은 글씨</strong>는 잘한 부분, <span class="fix"><s>빨간 줄</s> → <b class="fixto">초록 글씨</b></span>는 이렇게 고치라는 뜻이에요.</p>
       </div>
     </div>
-    <div class="paper-read" style="background:var(--shade);border-radius:12px;padding:12px 16px;margin:10px 0">${annotatedHtml(fb.annotated)}</div>
-    ${(fb.praise || []).length ? `<h3>👍 이런 점이 좋았어요</h3><ul>${fb.praise.map((p) => `<li><strong>${esc(p)}</strong></li>`).join('')}</ul>` : ''}
-    ${(fb.fixes || []).length ? `<h3>✏️ 이렇게 고쳐 봐요</h3><ul>${fb.fixes.map((f) => `<li><strong class="fix"><span class="en">${esc(f.wrong)}</span> → <span class="en">${esc(f.right)}</span></strong> ${esc(f.why || '')}</li>`).join('')}</ul>` : ''}
+    <div class="paper-read" style="background:var(--shade);border-radius:12px;padding:12px 16px;margin:10px 0">${annotatedHtml(withFixMarks(fb))}</div>
+    ${(fb.praise || []).length ? `<h3>👍 이런 점이 좋았어요</h3><ul>${fb.praise.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
+    ${(fb.fixes || []).length ? `<h3>✏️ 이렇게 고쳐 봐요</h3><ul>${fb.fixes.map((f) => `<li><span class="fix en"><s>${esc(f.wrong)}</s></span> → <b class="fixto en">${esc(f.right)}</b> <span>${esc(f.why || '')}</span></li>`).join('')}</ul>` : ''}
     ${opt.rewrite && fb.rewritten ? `<h3>📄 고쳐 쓴 글 ${sayBtn(fb.rewritten)}</h3><div class="paper-read" style="border:2px solid var(--leaf);border-radius:12px;padding:12px 16px">${esc(fb.rewritten)}</div>` : ''}`;
 }
 
@@ -1408,7 +1425,7 @@ const Te = {
         </div>
         <p class="small">(참고: 대규모 사용량이나 완전한 안정성이 필요할 경우, AI Studio 프로젝트 내에서 유료 결제 수단을 연동하여 확장할 수도 있습니다.)</p>
         <p>🔒 키는 안전하게 보관되며 학생들에게는 절대 보이지 않습니다.</p>
-        <h3 style="margin-top:16px">🎬 참고 영상: API 키 만들기 <span class="small">(약 1분)</span></h3>
+        <h3 style="margin-top:16px">🎬 참고 영상: API 키 만들기 <span class="small">(약 40초)</span></h3>
         <video controls preload="metadata" playsinline src="/API-key-guide.mp4"
           style="width:100%;border-radius:12px;border:2px solid #D5E5F1;background:#fff">
           이 브라우저에서는 영상을 재생할 수 없어요.

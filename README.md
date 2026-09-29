@@ -11,12 +11,14 @@
 | `netlify/functions/api.js` | 서버 함수: Gemini AI(대화·단어·예시 문장·첨삭), Unsplash 사진 검색 |
 | `netlify.toml` | 넷리파이 설정 (`/teacher`, `/admin` 주소 연결) |
 | `supabase/schema.sql` | 데이터베이스 표·보안 함수·사진 저장소를 한 번에 만드는 SQL |
+| `supabase/update-v4.sql` | 모든 학급의 AI 키를 한곳에서 관리하는 SQL. `update-v3.sql` 다음에 실행 |
+| `supabase/update-v3.sql` | 천천히 쓰기·바로 쓰기의 첨삭과 게시를 따로 저장하는 SQL. `update-v2.sql` 다음에 실행 |
 | `supabase/update-v2.sql` | v2 기능(교사 단원, 여러 학년 학급, 첨삭→다듬기→게시, 의견함)을 더하는 SQL. `schema.sql` 다음에 실행 |
 
 ## 1. Supabase 준비 (10분)
 
 1. **새 Supabase 프로젝트**를 만드세요. 이미 쓰는 프로젝트에 `submissions` 같은 같은 이름의 표가 있으면 충돌할 수 있어서 새 프로젝트를 권해요.
-2. 왼쪽 메뉴 **SQL Editor → New query**에 `supabase/schema.sql` 내용을 전부 붙여 넣고 **Run**. 이어서 `supabase/update-v2.sql`도 같은 방법으로 **Run**.
+2. 왼쪽 메뉴 **SQL Editor → New query**에 `supabase/schema.sql` 내용을 전부 붙여 넣고 **Run**. 이어서 `supabase/update-v2.sql`, `update-v3.sql`, `update-v4.sql`도 차례로 같은 방법으로 **Run**.
    `Success. No rows returned`가 나오면 끝입니다.
 3. **Project Settings → API Keys**에서 세 가지를 메모하세요.
    - Project URL (예: `https://abcd.supabase.co`)

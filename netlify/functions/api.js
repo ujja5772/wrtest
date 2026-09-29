@@ -4,10 +4,12 @@
 //   SUPABASE_SERVICE_ROLE_KEY   Supabase > Project Settings > API Keys 의 service_role(또는 secret) 키
 //   UNSPLASH_ACCESS_KEY         (선택) 사진 검색을 쓸 때만
 
-// 위에서부터 차례로 시도하고, 지원하지 않는 모델이면 자동으로 다음 모델로 넘어갑니다.
-const MODELS = ['gemini-flash-lite-latest', 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'];
-// 첨삭·예시 문장처럼 정확해야 하는 일은 더 똑똑한 모델부터 씁니다.
-const CAREFUL_MODELS = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-2.0-flash'];
+// 위에서부터 차례로 시도하고, 없어졌거나 지원하지 않는 모델이면 자동으로 다음 모델로 넘어갑니다.
+// (2026년 9월 기준: Gemini 2.x 모델은 종료되어 3.x 모델만 씁니다. 구글이 모델을 바꾸면 이 목록만 고치면 돼요.)
+// 빠른 일(대화, 단어 찾기, 뜻 보기)
+const MODELS = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.8-flash'];
+// 정확해야 하는 일(첨삭, 예시 문장)
+const CAREFUL_MODELS = ['gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
 
 const SB_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -30,16 +32,21 @@ async function rpc(name, args) {
 }
 
 // ---------- Gemini ----------
-async function gemini(keys, { system, contents, asJson, temperature = 0.7, models = MODELS }) {
+async function gemini(keys, { system, contents, asJson, models = MODELS }) {
   if (!keys || !keys.length) throw new Error('학급에 등록된 AI 키가 없어요. 선생님께 알려 주세요.');
   const start = Math.floor(Math.random() * keys.length);
   const order = keys.map((_, i) => keys[(start + i) % keys.length]);
-  let lastErr = 'AI 응답을 받지 못했어요.';
   const deadline = Date.now() + 9300; // 넷리파이 무료 함수는 10초 안에 끝나야 해요
+  let modelErr = '';  // 모델이 없어졌다는 오류
+  let otherErr = '';  // 키·사용량 등 더 중요한 오류
+  const isModelGone = (status, msg) => status === 404 || /not found|not supported for|no longer available|deprecated|is not found/i.test(msg);
+
   for (const model of models) {
-    for (const key of order) {
+    let thinking = true; // 생각 설정이 안 맞는 모델이면 빼고 한 번 더
+    for (let k = 0; k < order.length; k++) {
+      const key = order[k];
       const left = deadline - Date.now();
-      if (left < 1500) throw new Error('AI 응답이 늦어요. 잠시 뒤 다시 눌러 주세요.');
+      if (left < 1500) throw new Error(otherErr ? `AI 응답을 받지 못했어요. (${otherErr})` : 'AI 응답이 늦어요. 잠시 뒤 다시 눌러 주세요.');
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), left);
       try {
@@ -51,32 +58,36 @@ async function gemini(keys, { system, contents, asJson, temperature = 0.7, model
             systemInstruction: { parts: [{ text: system }] },
             contents,
             generationConfig: {
-              temperature,
               ...(asJson ? { responseMimeType: 'application/json' } : {}),
-              ...(model.includes('2.0') ? {} : { thinkingConfig: { thinkingBudget: 0 } }), // 빠르게 답하도록 생각 단계 끄기
+              ...(thinking ? { thinkingConfig: { thinkingLevel: 'low' } } : {}), // 빠르게 답하도록 생각은 짧게
             },
           }),
         });
         const data = await r.json().catch(() => ({}));
         if (r.ok) {
-          const text = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+          const text = (data.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim();
           if (text) return text;
-          lastErr = 'AI가 빈 답을 보냈어요.';
+          otherErr = 'AI가 빈 답을 보냈어요.';
           continue;
         }
-        const msg = data.error?.message || '';
-        lastErr = `${model}: ${msg || r.status}`;
-        // 모델이 없거나 지원 안 함 → 다음 모델로
-        if (r.status === 404 || /not found|not supported/i.test(msg)) break;
-        // 키 문제·사용량 초과 → 다음 키로
+        const msg = data.error?.message || String(r.status);
+        if (thinking && r.status === 400 && /thinking/i.test(msg)) { thinking = false; k--; continue; }
+        if (isModelGone(r.status, msg)) { modelErr = `${model}: ${msg}`; break; } // 다음 모델로
+        otherErr = msg; // 키 문제·사용량 초과 → 다음 키로
       } catch (e) {
-        lastErr = e.name === 'AbortError' ? 'AI 응답이 너무 오래 걸려요.' : e.message;
+        otherErr = e.name === 'AbortError' ? 'AI 응답이 너무 오래 걸려요.' : e.message;
       } finally {
         clearTimeout(timer);
       }
     }
   }
-  throw new Error(lastErr);
+  if (/API key|API_KEY|permission|unauthori|invalid authentication|credentials/i.test(otherErr)) {
+    throw new Error('AI 키가 맞지 않아요. 키를 끝까지 복사했는지 확인해 주세요. (' + otherErr.slice(0, 160) + ')');
+  }
+  if (/quota|rate|exhausted|429/i.test(otherErr)) {
+    throw new Error('오늘 AI 사용량이 다 찼어요. 다른 구글 계정의 키를 더 등록하면 나눠 쓸 수 있어요.');
+  }
+  throw new Error(otherErr || modelErr || 'AI 응답을 받지 못했어요.');
 }
 
 function parseJson(text) {
@@ -121,7 +132,7 @@ ${classBlock(ctx)}
 핵심 표현 목록:
 ${keys.map((k, i) => `${i + 1}. ${k}`).join('\n') || '(없음)'}
 형식: {"words":[{"word":"","meaning":"","example":""}],"key_ko":[""]}`;
-  const out = parseJson(await gemini(ctx.keys, { system, contents: [{ role: 'user', parts: [{ text: '만들어 주세요.' }] }], asJson: true, temperature: 0.4 }));
+  const out = parseJson(await gemini(ctx.keys, { system, contents: [{ role: 'user', parts: [{ text: '만들어 주세요.' }] }], asJson: true }));
   return {
     words: (out.words || []).slice(0, 10).map(w => ({ word: plain(w.word), meaning: w.meaning || '', example: plain(w.example) })),
     key_ko: (out.key_ko || []).slice(0, keys.length),
@@ -136,7 +147,7 @@ ${classBlock(ctx)}
 한국 고유의 놀이·음식·물건(예: 인형뽑기 → claw machine, 떡볶이 → tteokbokki)은 실제로 영어권에서 쓰는 표현을 주고, 마땅한 말이 없으면 로마자 표기와 짧은 설명을 준다.
 부적절한 말이면 빈 배열을 준다.
 형식: {"items":[{"word":"","meaning":"","example":""}]}`;
-  const out = parseJson(await gemini(ctx.keys, { system, contents: [{ role: 'user', parts: [{ text: q }] }], asJson: true, temperature: 0.2 }));
+  const out = parseJson(await gemini(ctx.keys, { system, contents: [{ role: 'user', parts: [{ text: q }] }], asJson: true }));
   return { items: (out.items || []).slice(0, 3).map(w => ({ word: plain(w.word), meaning: w.meaning || '', example: plain(w.example) })) };
 }
 
@@ -148,7 +159,7 @@ async function taskDefine(ctx, p) {
 문장 속에서 쓰인 뜻으로, 아주 짧은 한국어 뜻(2~8글자 정도)을 준다. 사람 이름이면 "사람 이름"이라고 한다.
 형식: {"meaning":""}`;
   const out = parseJson(await gemini(ctx.keys, {
-    system, asJson: true, temperature: 0,
+    system, asJson: true,
     contents: [{ role: 'user', parts: [{ text: `낱말: ${word}\n문장: ${sentence}` }] }],
   }));
   return { word, meaning: String(out.meaning || '') };
@@ -200,7 +211,7 @@ ${classBlock(ctx)}
 - 각 문장마다 한국어 뜻(ko)을 짧게 붙인다. 따옴표는 일반 따옴표(')만 쓴다.
 형식: {"sentences":[{"template":"I like ____ .","answer":["math"],"ko":"나는 수학을 좋아해요."}]}`;
   const out = parseJson(await gemini(ctx.keys, {
-    system, asJson: true, temperature: 0.3, models: CAREFUL_MODELS,
+    system, asJson: true, models: CAREFUL_MODELS,
     contents: [{ role: 'user', parts: [{ text: `대화 내용:\n${chatTranscript(p.history) || '(대화 없음 — 주제와 핵심 표현만으로 만들기)'}` }] }],
   }));
   const sentences = (out.sentences || [])
@@ -212,7 +223,59 @@ ${classBlock(ctx)}
 
 // 첨삭 표시가 학생 글을 바꾸지 않았는지 확인
 const squash = s => plain(s).replace(/\s+/g, ' ').trim().toLowerCase();
-const stripMarks = s => String(s).replace(/\[\[good:([\s\S]*?)\]\]/g, '$1').replace(/\[\[fix:([\s\S]*?)=>([\s\S]*?)\]\]/g, '$1').replace(/\[\[fix:([\s\S]*?)\]\]/g, '$1');
+// AI가 표시한 [[good:…]] / [[fix:틀린=>고친]] 을 뽑아내요 (=>, ->, →, ⇒ 모두 인식)
+function parseMarks(annotated) {
+  const marks = [];
+  const re = /\[\[\s*(good|fix)\s*:\s*([\s\S]*?)\]\]/gi;
+  let m;
+  while ((m = re.exec(String(annotated || '')))) {
+    const type = m[1].toLowerCase();
+    if (type === 'good') { marks.push({ type, text: m[2].trim() }); continue; }
+    const parts = m[2].split(/\s*(?:=>|->|→|⇒)\s*/);
+    marks.push({ type, text: (parts[0] || '').trim(), right: (parts.slice(1).join(' ') || '').trim() });
+  }
+  return marks;
+}
+// 학생 원문은 그대로 두고, 원문에서 찾은 부분에만 표시를 다시 입혀요 (원문이 바뀌는 일 없음)
+function buildAnnotated(text, marks, fixes) {
+  const lower = text.toLowerCase();
+  const spans = [];
+  const overlaps = (s, e) => spans.some(x => s < x.end && e > x.start);
+  const place = (needle, from) => {
+    const n = needle.toLowerCase();
+    if (!n) return -1;
+    for (const start of [from, 0]) {
+      let i = lower.indexOf(n, start);
+      while (i !== -1) {
+        if (!overlaps(i, i + n.length)) return i;
+        i = lower.indexOf(n, i + 1);
+      }
+    }
+    return -1;
+  };
+  let cursor = 0;
+  for (const mk of marks) {
+    const t = plain(mk.text);
+    if (!t || (mk.type === 'fix' && (!mk.right || squash(t) === squash(mk.right)))) continue;
+    const i = place(t, cursor);
+    if (i === -1) continue;
+    spans.push({ start: i, end: i + t.length, type: mk.type, right: plain(mk.right || '') });
+    cursor = i + t.length;
+  }
+  for (const f of fixes) { // 목록에만 있고 표시가 빠진 고칠 점도 빨간색으로
+    if (spans.some(x => x.type === 'fix' && squash(text.slice(x.start, x.end)) === squash(f.wrong))) continue;
+    const i = place(f.wrong, 0);
+    if (i !== -1) spans.push({ start: i, end: i + f.wrong.length, type: 'fix', right: f.right });
+  }
+  spans.sort((a, b) => a.start - b.start);
+  let out = '', pos = 0;
+  for (const x of spans) {
+    const orig = text.slice(x.start, x.end);
+    out += text.slice(pos, x.start) + (x.type === 'good' ? `[[good:${orig}]]` : `[[fix:${orig}=>${x.right}]]`);
+    pos = x.end;
+  }
+  return out + text.slice(pos);
+}
 
 async function taskFeedback(ctx, p) {
   const text = plain(String(p.text || '').trim().slice(0, 2000));
@@ -241,18 +304,17 @@ ${classBlock(ctx)}
 학생에게 보이는 문장(praise, fixes의 why, cheer)에서는 '교사가 제시한', '선생님이 정한' 같은 말 없이 그냥 '핵심 표현'이라고 쓴다. 상·중·하 같은 등급은 학생에게 보이는 문장에 절대 쓰지 않는다.
 형식: {"annotated":"","praise":[],"fixes":[],"rewritten":"","cheer":"","grade":"","report":""}`;
   const out = parseJson(await gemini(ctx.keys, {
-    system, asJson: true, temperature: 0.2, models: CAREFUL_MODELS,
+    system, asJson: true, models: CAREFUL_MODELS,
     contents: [{ role: 'user', parts: [{ text: `학생 글:\n${text}` }] }],
   }));
 
   // 검증: 표시를 걷어냈을 때 원문과 다르면 표시를 쓰지 않음
-  let annotated = plain(out.annotated || '');
-  if (!annotated || squash(stripMarks(annotated)) !== squash(text)) annotated = text;
   const inText = squash(text);
   const fixes = (out.fixes || [])
-    .map(f => ({ wrong: plain(f.wrong), right: plain(f.right), why: String(f.why || '') }))
+    .map(f => ({ wrong: plain(f.wrong).trim(), right: plain(f.right).trim(), why: String(f.why || '') }))
     .filter(f => f.wrong && f.right && squash(f.wrong) !== squash(f.right) && inText.includes(squash(f.wrong)))
     .slice(0, 5);
+  const annotated = buildAnnotated(text, parseMarks(plain(out.annotated || '')), fixes);
   let grade = ['상', '중', '하'].includes(out.grade) ? out.grade : '중';
   if (mode === 'slow' && grade === '상') grade = '중'; // 빈칸 채우기 글은 최고 '중'
   const report = String(out.report || '') + (mode === 'slow' ? ' (빈칸 채우기로 작성)' : '');
@@ -299,7 +361,7 @@ async function photoTrack(p) {
 
 async function testKey(p) {
   const key = String(p.key || '').trim();
-  const text = await gemini([key], { system: 'Answer with one word.', contents: [{ role: 'user', parts: [{ text: 'Say OK.' }] }], temperature: 0 });
+  const text = await gemini([key], { system: 'Answer with one word.', contents: [{ role: 'user', parts: [{ text: 'Say OK.' }] }] });
   // (키가 AQ. 새 형식이든 AIza 옛 형식이든 같은 방법으로 확인해요)
   return { ok: !!text };
 }
