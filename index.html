@@ -861,9 +861,9 @@ const St = {
         const r = await callApi('hint', { ...this.creds(), history: this.chatHist() });
         if (!r.sentences?.length) throw new Error('empty');
         LS.set(this.k('hints'), { sentences: r.sentences, values: r.sentences.map(() => []) });
-      } catch {
+      } catch (e) {
         LS.set(this.k('hints'), this.fallbackHints());
-        toast('AI가 바빠서 기본 예시 문장을 보여 줄게요.');
+        toast(`AI 예시 문장을 받지 못해서 기본 문장을 보여 줄게요. 잠시 뒤 다시 눌러 보세요. (${e.message})`, true);
       }
       this.drawSents();
     });

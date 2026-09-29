@@ -211,7 +211,7 @@ ${classBlock(ctx)}
 - 각 문장마다 한국어 뜻(ko)을 짧게 붙인다. 따옴표는 일반 따옴표(')만 쓴다.
 형식: {"sentences":[{"template":"I like ____ .","answer":["math"],"ko":"나는 수학을 좋아해요."}]}`;
   const out = parseJson(await gemini(ctx.keys, {
-    system, asJson: true, models: CAREFUL_MODELS,
+    system, asJson: true, models: MODELS, // 빠른 모델: 넷리파이 10초 제한 안에 답이 오도록
     contents: [{ role: 'user', parts: [{ text: `대화 내용:\n${chatTranscript(p.history) || '(대화 없음 — 주제와 핵심 표현만으로 만들기)'}` }] }],
   }));
   const sentences = (out.sentences || [])
