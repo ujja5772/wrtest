@@ -8,6 +8,8 @@
 // (2026년 9월 기준: Gemini 2.x 모델은 종료되어 3.x 모델만 씁니다. 구글이 모델을 바꾸면 이 목록만 고치면 돼요.)
 // 빠른 일(대화, 단어 찾기, 뜻 보기)
 const MODELS = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.8-flash'];
+// 대화: 한국어 도움말을 바르게 쓰도록 Flash부터 (Flash-Lite는 한국어 맞춤법 실수가 잦아요)
+const CHAT_MODELS = ['gemini-3.7-flash', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
 // 정확해야 하는 일(첨삭, 예시 문장)
 const CAREFUL_MODELS = ['gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
 
@@ -60,7 +62,7 @@ async function gemini(keys, { system, contents, asJson, models = MODELS }) {
       const key = order[k];
       const left = deadline - Date.now();
       if (left < 1200) throw new Error(otherErr ? `AI 응답을 받지 못했어요. (${otherErr})` : 'AI 응답이 늦어요. 잠시 뒤 다시 눌러 주세요.');
-      const thinking = noThinking.has(model) ? null : { thinkingLevel: /lite/.test(model) ? 'minimal' : 'low' };
+      const thinking = noThinking.has(model) ? null : { thinkingLevel: 'low' };
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), left);
       try {
@@ -193,19 +195,30 @@ ${ctx.guide || '쓰기 주제에 대해 학생이 좋아하는 것, 이유, 자�
 규칙:
 1. 대화 가이드에 나온 주제를 빠짐없이 하나씩 차례로 묻는다. 한 주제마다 "고르기 → 이유 → 자세히 → 느낌" 순서로 학생의 답을 따라간다. 한 주제를 너무 오래 끌지 말고, 남은 대화 수 안에 가이드의 주제를 모두 다룰 수 있게 조절한다.
 2. 가이드와 쓰기 주제 밖의 이야기(예: 음식 맛의 세부, 관계없는 잡담)는 묻지 않는다. 학생이 벗어나면 짧게 반응하고 다시 주제로 돌아온다.
-3. 한 번에 질문은 하나만. 영어 문장은 짧고 쉽게(1~2문장). 질문 아래 줄에 괄호로 짧은 한국어 도움말을 붙인다.
-4. 학생이 한국어로 답하거나 영어가 서툴면, 그 뜻을 영어로 어떻게 말하는지 예시("You can say: ...")를 알려 준 뒤 다음 질문을 한다. 한국 고유의 놀이·음식·물건 이름은 실제로 쓰는 영어 표현(예: 인형뽑기 → claw machine)으로 알려 주고, 학생이 말한 것을 다른 것으로 바꾸지 않는다.
-5. 학생의 영어가 틀려도 혼내지 말고, 바른 문장으로 자연스럽게 되받아 준다.
-6. 이모지는 1개 이하. 전체 답은 4줄 이내. 따옴표는 일반 따옴표(')만 쓴다.
-7. 지금은 학생의 ${turn}번째 대답 차례까지 왔다(최대 ${maxTurns}번).${turn >= maxTurns ? ' 이번이 마지막이다. 질문하지 말고 칭찬과 함께 "이제 쓰기 단계로 가요!" 라고 마무리한다.' : ''}`;
+3. 학생의 선택과 취향은 무엇이든 그대로 인정한다. 절대 "그건 과목이 아니에요", "그건 음식이 아니에요"처럼 거절하거나 따지지 않는다.
+   - 초등학교 과목은 넓게 본다: music, art, PE, math, science, English, Korean, social studies, 도덕(moral education), 실과(practical arts), 창체, 코딩 등 모두 과목이다.
+   - 조금 엉뚱한 답(예: 좋아하는 과목이 점심시간)도 웃으며 받아 주고, 그 답으로 대화를 이어 간다.
+4. 학생이 "음", "음…", "어", "흠", "글쎄", "몰라", "모르겠어요", "ㅋㅋ", "?" 처럼 머뭇거리거나 짧게 답하면, 그 말의 뜻을 묻지 말고 생각 중이라는 뜻으로 받아들인다. 이때는 고를 수 있는 예시 2~3개를 영어로 주고(예: "Do you like music, art, or PE?") 따라 말할 문장 틀(예: "My favorite subject is ___.")을 알려 준다.
+5. 학생이 낱말 하나만 답해도 맞는 답으로 인정하고, 그 낱말을 넣은 완전한 문장으로 되받아 준다(예: "music" → "Great! My favorite subject is music.").
+6. 한 번에 질문은 하나만. 영어 문장은 짧고 쉽게(1~2문장). 질문 아래 줄에 괄호로 짧은 한국어 도움말을 붙인다. 한국어는 초등학생이 읽는 글이므로 맞춤법을 정확히 지키고, 낱말을 줄이거나 빼먹지 않는다(예: '좋아하는 음식이 뭐예요?'를 '좋아하는 음이 뭐예요?'로 쓰면 안 됨).
+7. 학생이 한국어로 답하거나 영어가 서툴면, 그 뜻을 영어로 어떻게 말하는지 예시("You can say: ...")를 알려 준 뒤 다음 질문을 한다. 한국 고유의 놀이·음식·물건 이름은 실제로 쓰는 영어 표현(예: 인형뽑기 → claw machine)으로 알려 주고, 학생이 말한 것을 다른 것으로 바꾸지 않는다. 한국어 낱말의 뜻이 분명하지 않으면 뜻을 캐묻지 말고 가장 그럴듯한 뜻으로 이어 간다.
+8. 학생의 영어가 틀려도 혼내지 말고, 바른 문장으로 자연스럽게 되받아 준다.
+9. 이모지는 1개 이하. 전체 답은 4줄 이내. 따옴표는 일반 따옴표(')만 쓴다.
+10. 지금은 학생의 ${turn}번째 대답 차례까지 왔다(최대 ${maxTurns}번).${turn >= maxTurns ? ' 이번이 마지막이다. 질문하지 말고 칭찬과 함께 "이제 쓰기 단계로 가요!" 라고 마무리한다.' : ''}`;
   let contents;
   if (!history.length || p.start) {
     contents = [{ role: 'user', parts: [{ text: '(대화를 시작해 주세요. 반갑게 인사하고 가이드의 첫 질문을 하세요.)' }] }];
   } else {
-    contents = history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: String(m.text || '').slice(0, 500) }] }));
+    // "음", "몰라" 같은 머뭇거림은 AI가 뜻을 되묻지 않도록 표시해서 보냄
+    const hesitant = /^\s*(음+|으음+|어+|어어+|흠+|글쎄+요?|몰라요?|모르겠어요?|잘\s*모르겠어요?|ㅋ+|ㅎ+|\?+|\.+|…+|um+|uh+|hmm+)[\s.~…?!]*$/i;
+    contents = history.map(m => {
+      const t = String(m.text || '').slice(0, 500);
+      const text = m.role === 'user' && hesitant.test(t) ? `${t}\n(학생이 머뭇거리는 중이에요. 뜻을 묻지 말고 고를 수 있는 예시와 문장 틀을 주세요.)` : t;
+      return { role: m.role === 'user' ? 'user' : 'model', parts: [{ text }] };
+    });
     if (contents[0].role === 'model') contents.unshift({ role: 'user', parts: [{ text: '(대화 시작)' }] });
   }
-  const reply = plain(await gemini(ctx.keys, { system, contents }));
+  const reply = plain(await gemini(ctx.keys, { system, contents, models: CHAT_MODELS }));
   rpc('svc_log', { p_code: p.class_code, p_kind: 'chat' }).catch(() => {});
   return { reply };
 }

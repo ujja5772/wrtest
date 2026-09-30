@@ -25,9 +25,9 @@
   --red: #CF3434;
   --red-soft: #FDECEC;
   --shade: #F3F7FB;
-  --font-ko: "Gowun Dodum", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-ko: "Gowun Dodum", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
   --font-head: "Jua", "Gowun Dodum", "Malgun Gothic", system-ui, sans-serif;
-  --font-en: "Andika", "Comic Sans MS", "Segoe UI", system-ui, sans-serif;
+  --font-en: "Andika", "Gowun Dodum", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
   box-sizing: border-box;
   padding-top: env(safe-area-inset-top, 0px);
   padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -335,7 +335,13 @@ function db() {
 }
 async function rpc(name, args) {
   const { data, error } = await db().rpc(name, args);
-  if (error) throw new Error(error.message || '저장소 오류가 났어요.');
+  if (error) {
+    if (/로그인 시간이 끝났어요/.test(error.message || '')) { // 통행증이 만료되면 다시 로그인 화면으로
+      SS.del('ew_teacher'); SS.del('ew_admin');
+      setTimeout(() => location.reload(), 1500);
+    }
+    throw new Error(error.message || '저장소 오류가 났어요.');
+  }
   return data;
 }
 async function callApi(action, payload) {
@@ -527,9 +533,12 @@ const St = {
   async init() {
     try { this.cfg = (await rpc('get_public_config', {})) || this.cfg; } catch {}
     const saved = SS.get('ew_student');
-    if (saved) {
-      try { await this.enter(saved); return; } catch { SS.del('ew_student'); }
-    }
+    if (saved && String(saved.token || '').startsWith('tok:')) {
+      try { // 새로고침: 비밀번호 대신 임시 통행증으로 이어서 쓰기
+        const r = await rpc('student_resume', { p_code: saved.code, p_no: Number(saved.no), p_token: saved.token });
+        this.start(r, saved.no, saved.token); return;
+      } catch { SS.del('ew_student'); }
+    } else SS.del('ew_student');
     this.renderEnter();
   },
 
@@ -581,16 +590,22 @@ const St = {
 
   async enter(d) {
     const r = await rpc('student_enter', { p_code: d.code, p_no: Number(d.no), p_name: d.name, p_pin: d.pin });
-    const name = r.student_name || d.name; // 처음 등록한 이름(또는 선생님이 고친 이름)
-    this.me = { class_code: r.class_code, no: Number(d.no), name, pin: d.pin };
+    if (r.error) throw new Error(r.error);
+    this.start(r, d.no, r.token);
+  },
+  // 입장 성공: PIN은 기억하지 않고 서버가 준 임시 통행증(token)만 가지고 있어요
+  start(r, no, token) {
+    const name = r.student_name; // 처음 등록한 이름(또는 선생님이 고친 이름)
+    this.me = { class_code: r.class_code, no: Number(no), name, pin: token };
     this.cls = r;
-    SS.set('ew_student', { code: r.class_code, no: d.no, name, pin: d.pin });
+    SS.set('ew_student', { code: r.class_code, no: Number(no), name, token });
     this.mode = LS.get(this.k('mode'));
     this.step = LS.get(this.k('step')) || 'study';
     this.renderShell();
   },
 
   logout() {
+    if (this.me?.pin) rpc('student_logout', { p_token: this.me.pin }).catch(() => {});
     SS.del('ew_student'); this.me = null; this.cls = null;
     window.speechSynthesis?.cancel();
     this.renderEnter();
@@ -1296,7 +1311,7 @@ const Te = {
 
   async init() {
     const s = SS.get('ew_teacher');
-    if (s) {
+    if (s && String(s.pw || '').startsWith('tok:')) { // pw 자리에는 비밀번호가 아니라 임시 통행증이 들어 있어요
       this.code = s.code; this.pw = s.pw; this.target = s.target || null;
       try { await this.load(); return; } catch { SS.del('ew_teacher'); }
     }
@@ -1312,7 +1327,15 @@ const Te = {
   cur() { return this.ov.classes.find((c) => c.class_code === this.target) || {}; },
   schools() { return [...new Set(this.ov.classes.map((c) => c.school))].join(', '); },
 
-  logout() { SS.del('ew_teacher'); this.code = this.pw = this.ov = this.det = null; this.renderLogin(); },
+  logout() {
+    if (this.pw) rpc('teacher_logout', { p_token: this.pw }).catch(() => {});
+    SS.del('ew_teacher'); this.code = this.pw = this.ov = this.det = null; this.renderLogin();
+  },
+  async getToken(code, pw) {
+    const r = await rpc('teacher_login', { p_code: code, p_pw: pw });
+    if (r.error) throw new Error(r.error);
+    return r.token;
+  },
 
   // ---------- 로그인·가입 ----------
   renderLogin(view) {
@@ -1365,8 +1388,11 @@ const Te = {
   async login(e) {
     e.preventDefault();
     await busy($('#l_btn'), async () => {
-      this.code = val('l_code').trim(); this.pw = val('l_pw'); this.target = this.code;
-      try { await this.load(); } catch (err) { this.code = this.pw = null; throw err; }
+      const code = val('l_code').trim();
+      const token = await this.getToken(code, val('l_pw'));
+      this.code = code; this.pw = token; this.target = code;
+      $('#l_pw').value = '';
+      await this.load();
     });
   },
   async signup(e) {
@@ -1376,7 +1402,7 @@ const Te = {
     if (!items.length) { toast('반을 하나 이상 골라 주세요.', true); return; }
     await busy($('#j_btn'), async () => {
       const r = await rpc('teacher_signup2', { p_join: val('j_code').trim(), p_pw: val('j_pw'), p_name: '', p_school: val('j_school'), p_items: items });
-      this.code = r.codes[0]; this.pw = val('j_pw'); this.target = r.codes[0];
+      this.code = r.codes[0]; this.pw = await this.getToken(r.codes[0], val('j_pw')); this.target = r.codes[0];
       await this.load();
       toast(`학급 ${r.codes.length}개를 만들었어요. 먼저 AI 키를 등록해 주세요!`);
     });
@@ -1587,7 +1613,8 @@ const Te = {
     try { list = await rpc('teacher_students', this.a({ p_target: this.target })); }
     catch (e) { m.innerHTML = `<div class="alert">${esc(e.message)}</div>`; return; }
     m.innerHTML = `${this.classBar()}<section class="panel">
-      <h2>학생 관리 <span class="small">${esc(clsLabel(this.cur()))} (${list.length}명)</span></h2>
+      <div class="row"><h2 class="grow" style="margin:0">학생 관리 <span class="small">${esc(clsLabel(this.cur()))} (${list.length}명)</span></h2>
+        <span class="small">새 학생 등록</span>${this.lockBtn(this.cur())}</div>
       <p>이름은 학생이 <b>처음 입장할 때 적은 이름</b>으로 등록돼요. 잘못 적었으면 여기서 고쳐 주세요. 고친 이름은 게시판과 결과물에도 바로 바뀌어요.<br>학생의 PIN은 "처음 입장할 때 입력한 숫자 4자리"예요. PIN을 초기화하면 학생이 다음에 입장할 때 새 숫자 4자리를 정해요.</p>
       <div class="scroll"><table><thead><tr><th>번호</th><th>이름</th><th>PIN</th><th>마지막 입장</th><th>첨삭 기록</th><th></th></tr></thead><tbody>
       ${list.map((s) => `<tr><td>${s.student_no}</td><td><div class="row" style="gap:4px;flex-wrap:nowrap"><input type="text" id="nm-${s.student_no}" value="${attr(s.student_name)}" style="width:130px;padding:4px 8px"><button class="btn ghost sm" onclick="Te.renameStudent(${s.student_no}, this)">저장</button></div></td><td>${s.has_pin ? '설정됨' : '<b>초기화됨</b>'}</td>
@@ -1617,17 +1644,20 @@ const Te = {
     m.innerHTML = `
     <section class="panel">
       <h2>내 학급</h2>
-      <div class="scroll"><table><thead><tr><th>학급 코드</th><th>지금 단원</th><th>입장한 학생</th><th>예상 학생 수</th><th>게시한 글</th><th>AI 키</th><th></th></tr></thead><tbody>
+      <div class="scroll"><table><thead><tr><th>학급 코드</th><th>지금 단원</th><th>입장한 학생</th><th>예상 학생 수</th><th>새 학생 등록</th><th>게시한 글</th><th>AI 키</th><th></th></tr></thead><tbody>
       ${this.ov.classes.map((c) => {
         const p = pendingFor(c.class_code);
         return `<tr><td><b>${esc(c.class_code)}</b></td><td>${esc(c.unit_name || '-')}</td><td>${c.students}</td>
         <td><div class="row" style="gap:4px;flex-wrap:nowrap"><input type="number" min="0" max="60" id="ex-${attr(c.class_code)}" value="${c.expected_students || ''}" style="width:80px;padding:4px 8px">
           <button class="btn ghost sm" onclick="Te.saveExpected('${attr(c.class_code)}', this)">저장</button></div></td>
+        <td>${this.lockBtn(c)}</td>
         <td>${c.posted}</td><td>${c.key_count}개</td>
         <td class="row" style="gap:6px">${p ? `<span class="small">삭제 대기 중</span><button class="btn ghost sm" onclick="Te.cancelReq('${p.id}', this)">신청 취소</button>`
             : `<button class="btn red sm" onclick="Te.reqDelete('${attr(c.class_code)}', this)">삭제 신청</button>`}</td></tr>`;
       }).join('')}
       </tbody></table></div>
+      <div class="row" style="margin-top:10px"><button class="btn ghost sm" onclick="Te.setLock(null, true, this)">🔒 모든 학급 새 등록 잠그기</button><button class="btn ghost sm" onclick="Te.setLock(null, false, this)">🔓 모두 풀기</button></div>
+      <p class="small"><b>새 학생 등록 잠금</b>: 반 학생들이 모두 한 번씩 입장한 뒤 잠그면, 이미 등록된 번호와 PIN으로만 들어올 수 있어요. 다른 반 학생이 새 번호로 끼어드는 것을 막아요. 전학생이 오면 잠깐 풀었다가 다시 잠가요.</p>
       <p class="small">예상 학생 수는 관리자 통계의 제출률 계산에 쓰여요. 학급 삭제는 바로 지워지지 않아요. 신청하고 <b>3일</b>이 지난 뒤 관리자가 승인하면 학급과 학생 글이 모두 지워져요. 그 전에는 언제든 취소할 수 있어요.</p>
     </section>
     <section class="panel">
@@ -1638,6 +1668,19 @@ const Te = {
       <div style="margin-top:8px"><button class="btn green" onclick="Te.addClasses(this)">학급 추가</button></div>
     </section>`;
     this.previewCode('a');
+  },
+  lockBtn(c) {
+    return c.reg_locked
+      ? `<button class="btn sm green" title="눌러서 풀기" onclick="Te.setLock('${attr(c.class_code)}', false, this)">🔒 잠김</button>`
+      : `<button class="btn sm ghost" title="눌러서 잠그기" onclick="Te.setLock('${attr(c.class_code)}', true, this)">🔓 열림</button>`;
+  },
+  async setLock(code, locked, btn) {
+    const targets = code ? [code] : this.ov.classes.map((c) => c.class_code);
+    await busy(btn, async () => {
+      await rpc('teacher_set_reg_lock', this.a({ p_targets: targets, p_locked: locked }));
+      toast(locked ? '새 학생 등록을 잠갔어요. 이미 등록된 학생만 들어올 수 있어요.' : '새 학생 등록을 열었어요.');
+      this.ov = await rpc('teacher_overview', this.a()); this.renderShell();
+    });
   },
   async saveExpected(code, btn) {
     const n = Number(val(`ex-${code}`) || 0);
@@ -1712,7 +1755,6 @@ const Te = {
     if (a !== b) { toast('두 비밀번호가 서로 달라요.', true); return; }
     await busy(btn, async () => {
       await rpc('teacher_change_password', this.a({ p_new: a }));
-      this.pw = a; SS.set('ew_teacher', { code: this.code, pw: a, target: this.target });
       toast('비밀번호를 바꿨어요.'); $('#np1').value = ''; $('#np2').value = '';
     });
   },
@@ -1870,7 +1912,8 @@ const Ad = {
   pin: null, tab: 'stats', stats: null,
   async init() {
     const s = SS.get('ew_admin');
-    if (s) { this.pin = s; try { await rpc('admin_login', { p_pin: s }); return this.renderShell(); } catch { SS.del('ew_admin'); } }
+    if (s && String(s).startsWith('tok:')) { this.pin = s; try { await rpc('admin_login', { p_pin: s }); return this.renderShell(); } catch { SS.del('ew_admin'); } }
+    else SS.del('ew_admin');
     this.renderLogin();
   },
   renderLogin() {
@@ -1885,11 +1928,15 @@ const Ad = {
   async login(e) {
     e.preventDefault();
     await busy($('#ad_btn'), async () => {
-      await rpc('admin_login', { p_pin: val('ad_pin') });
-      this.pin = val('ad_pin'); SS.set('ew_admin', this.pin); this.renderShell();
+      const r = await rpc('admin_login2', { p_pin: val('ad_pin') });
+      if (r.error) throw new Error(r.error);
+      this.pin = r.token; SS.set('ew_admin', r.token); this.renderShell(); // PIN 대신 임시 통행증만 저장
     });
   },
-  logout() { SS.del('ew_admin'); this.pin = null; this.renderLogin(); },
+  logout() {
+    if (this.pin) rpc('admin_logout', { p_token: this.pin }).catch(() => {});
+    SS.del('ew_admin'); this.pin = null; this.renderLogin();
+  },
   a(x) { return { p_pin: this.pin, ...(x || {}) }; },
 
   renderShell() {
@@ -2035,7 +2082,7 @@ const Ad = {
     if (a.length < 4 || a !== b) { toast('새 PIN을 4자 이상, 두 칸 똑같이 적어 주세요.', true); return; }
     await busy(btn, async () => {
       await rpc('admin_set_config', this.a({ p: { new_pin: a } }));
-      this.pin = a; SS.set('ew_admin', a); toast('PIN을 바꿨어요.'); this.renderShell();
+      toast('PIN을 바꿨어요.'); this.renderShell();
     });
   },
 };
