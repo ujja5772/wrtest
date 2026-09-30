@@ -95,6 +95,10 @@ a { color: var(--ink); }
 .rp-prev { margin: 10px 0 4px; padding: 10px 14px; border: 2px dashed #C9DAE8; border-radius: 12px; }
 .rp-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin: 2px 0; }
 .rp-line b { font-family: var(--font-head); font-weight: 400; min-width: 56px; }
+.roster { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.rs { display: inline-block; border-radius: 999px; padding: 3px 12px; font-size: .95rem; background: #F1F3F5; border: 2px solid #D5DBE1; color: var(--ink); }
+.rs.rs-ok { background: var(--leaf-soft); border-color: #8FCFAE; }
+.rs.rs-mid { background: #FFF6D8; border-color: #EBCB6B; }
 .gradepick { display: grid; gap: 6px; }
 .gradepick .gr { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 6px 10px; border: 1.5px solid #E1EBF3; border-radius: 10px; }
 .gradepick .gr b { font-family: var(--font-head); font-weight: 400; min-width: 52px; }
@@ -577,9 +581,10 @@ const St = {
 
   async enter(d) {
     const r = await rpc('student_enter', { p_code: d.code, p_no: Number(d.no), p_name: d.name, p_pin: d.pin });
-    this.me = { class_code: r.class_code, no: Number(d.no), name: d.name, pin: d.pin };
+    const name = r.student_name || d.name; // 처음 등록한 이름(또는 선생님이 고친 이름)
+    this.me = { class_code: r.class_code, no: Number(d.no), name, pin: d.pin };
     this.cls = r;
-    SS.set('ew_student', { code: r.class_code, no: d.no, name: d.name, pin: d.pin });
+    SS.set('ew_student', { code: r.class_code, no: d.no, name, pin: d.pin });
     this.mode = LS.get(this.k('mode'));
     this.step = LS.get(this.k('step')) || 'study';
     this.renderShell();
@@ -1123,10 +1128,12 @@ const St = {
       this._galUrls = await signedUrls(this._gal);
     } catch (e) { v.innerHTML = `<div class="alert">${esc(e.message)}</div>`; return; }
     const units = [...new Set(this._gal.map((x) => x.unit_name))];
-    const cur = units.includes(this.cls.unit_name) ? this.cls.unit_name : '__all';
+    const keep = this._galSel && (this._galSel === '__all' || units.includes(this._galSel)) ? this._galSel : null;
+    const cur = keep || (units.includes(this.cls.unit_name) ? this.cls.unit_name : '__all');
     v.innerHTML = `<section class="panel row" style="padding:10px 18px">
         <h2 class="grow" style="margin:0">🖼️ 우리 반 게시판</h2>
         <span class="small">모르는 영어 낱말을 누르면 뜻이 나와요.</span>
+        <button class="btn ghost sm" onclick="St.renderGallery($('#view'))">🔄 새로고침</button>
         <select id="galUnit" style="width:auto" onchange="St.drawGallery()" aria-label="단원 고르기">
           <option value="__all">모든 단원</option>
           ${units.map((u) => `<option value="${attr(u)}" ${u === cur ? 'selected' : ''}>${esc(u || '단원 없음')}</option>`).join('')}
@@ -1135,7 +1142,7 @@ const St = {
     this.drawGallery();
   },
   drawGallery() {
-    const u = val('galUnit');
+    const u = val('galUnit'); this._galSel = u;
     const list = this._gal.filter((x) => u === '__all' || x.unit_name === u);
     $('#gal').innerHTML = list.length ? `<div class="gallery">${list.map((x) => `
       <article class="card ${x.mine ? 'mine' : ''}">
@@ -1453,14 +1460,22 @@ const Te = {
         <h3>🔑 새 키 저장</h3>
         <label for="newKey" style="margin-top:0">복사한 키 붙여넣기</label>
         <input type="password" id="newKey" placeholder="복사한 키를 여기에 붙여 넣어요" autocomplete="off">
+        <label>키 종류</label>
+        <div class="checks">
+          <label><input type="radio" name="k_type" value="free" checked> 🆓 무료 키 <span class="small">(먼저 번갈아 써요)</span></label>
+          <label><input type="radio" name="k_type" value="paid"> 💳 유료 키 <span class="small">(무료 키가 막힐 때만 써요)</span></label>
+        </div>
         <label>이 키를 넣을 학급 <span class="small">(보통은 모두 그대로 두면 돼요)</span></label>
         <div class="checks">${list.map((c) => `<label><input type="checkbox" name="k_cls" value="${attr(c.class_code)}" checked> ${clsLabel(c)}</label>`).join('')}</div>
         <div style="margin-top:12px"><button class="btn green" onclick="Te.addKey(this)">🔑 AI 키 저장</button></div>
       </section>
       <section class="panel">
         <h3>학급별로 등록된 키</h3>
-        <div class="scroll"><table><thead><tr><th>학급</th><th>키 (학급당 4개까지)</th></tr></thead><tbody>
-        ${list.map((c) => `<tr><td style="white-space:nowrap"><b>${clsLabel(c)}</b></td><td>${c.keys.length ? c.keys.map((k, i) => `<span class="chip" style="cursor:default;font-family:monospace;font-size:.9rem">${esc(k)}<button class="iconbtn" aria-label="이 키 삭제" onclick="Te.removeKey('${attr(c.class_code)}', ${i}, this)">✕</button></span>`).join('') : '<b class="fix">키 없음</b>'}</td></tr>`).join('')}
+        <p class="small">AI는 🆓 무료 키를 먼저 번갈아 쓰고, 무료 키가 모두 사용량 한도에 걸렸을 때만 💳 유료 키를 써요.</p>
+        <div class="scroll"><table><thead><tr><th>학급</th><th>🆓 무료 키 (4개까지)</th><th>💳 유료 키 (2개까지)</th></tr></thead><tbody>
+        ${list.map((c) => `<tr><td style="white-space:nowrap"><b>${clsLabel(c)}</b></td>
+          <td>${c.keys.length ? c.keys.map((k, i) => `<span class="chip" style="cursor:default;font-family:monospace;font-size:.9rem">${esc(k)}<button class="iconbtn" aria-label="이 키 삭제" onclick="Te.removeKey('${attr(c.class_code)}', ${i}, this)">✕</button></span>`).join('') : '<span class="small">없음</span>'}</td>
+          <td>${(c.paid || []).length ? c.paid.map((k, i) => `<span class="chip" style="cursor:default;font-family:monospace;font-size:.9rem;background:#FFF1C4">💳 ${esc(k)}<button class="iconbtn" aria-label="이 유료 키 삭제" onclick="Te.removeKey('${attr(c.class_code)}', ${i}, this, true)">✕</button></span>`).join('') : '<span class="small">없음</span>'}</td></tr>`).join('')}
         </tbody></table></div>
       </section>`;
   },
@@ -1472,15 +1487,16 @@ const Te = {
     await busy(btn, async () => {
       try { await callApi('test_key', { key }); }
       catch (e) { if (!confirm(`이 키로 AI를 불러 보지 못했어요.\n(${e.message})\n\n키를 끝까지 복사했는지 확인해 주세요. 그래도 저장할까요?`)) return; }
-      const r = await rpc('teacher_add_key_many', this.a({ p_targets: targets, p_key: key }));
-      toast(`학급 ${r.added}개에 키를 저장했어요.${r.dup ? ` (이미 있던 학급 ${r.dup}개)` : ''}${r.full ? ` (4개가 꽉 찬 학급 ${r.full}개는 빼고)` : ''}`);
+      const paid = document.querySelector('input[name="k_type"]:checked')?.value === 'paid';
+      const r = await rpc('teacher_add_key_many', this.a({ p_targets: targets, p_key: key, p_paid: paid }));
+      toast(`학급 ${r.added}개에 ${paid ? '💳 유료' : '🆓 무료'} 키를 저장했어요.${r.dup ? ` (이미 있던 학급 ${r.dup}개)` : ''}${r.full ? ` (자리가 꽉 찬 학급 ${r.full}개는 빼고)` : ''}`);
       this.ov = await rpc('teacher_overview', this.a()); this.renderShell();
     });
   },
-  async removeKey(code, i, btn) {
-    if (!confirm('이 학급에서 이 키를 삭제할까요?')) return;
+  async removeKey(code, i, btn, paid) {
+    if (!confirm(`이 학급에서 이 ${paid ? '유료 ' : ''}키를 삭제할까요?`)) return;
     await busy(btn, async () => {
-      await rpc('teacher_remove_key', this.a({ p_target: code, p_index: i }));
+      await rpc(paid ? 'teacher_remove_paid_key' : 'teacher_remove_key', this.a({ p_target: code, p_index: i }));
       this.ov = await rpc('teacher_overview', this.a()); this.renderShell();
     });
   },
@@ -1572,13 +1588,18 @@ const Te = {
     catch (e) { m.innerHTML = `<div class="alert">${esc(e.message)}</div>`; return; }
     m.innerHTML = `${this.classBar()}<section class="panel">
       <h2>학생 관리 <span class="small">${esc(clsLabel(this.cur()))} (${list.length}명)</span></h2>
-      <p>학생의 PIN은 "처음 입장할 때 입력한 숫자 4자리"예요. PIN을 초기화하면 학생이 다음에 입장할 때 새 숫자 4자리를 정해요.</p>
+      <p>이름은 학생이 <b>처음 입장할 때 적은 이름</b>으로 등록돼요. 잘못 적었으면 여기서 고쳐 주세요. 고친 이름은 게시판과 결과물에도 바로 바뀌어요.<br>학생의 PIN은 "처음 입장할 때 입력한 숫자 4자리"예요. PIN을 초기화하면 학생이 다음에 입장할 때 새 숫자 4자리를 정해요.</p>
       <div class="scroll"><table><thead><tr><th>번호</th><th>이름</th><th>PIN</th><th>마지막 입장</th><th>첨삭 기록</th><th></th></tr></thead><tbody>
-      ${list.map((s) => `<tr><td>${s.student_no}</td><td>${esc(s.student_name)}</td><td>${s.has_pin ? '설정됨' : '<b>초기화됨</b>'}</td>
+      ${list.map((s) => `<tr><td>${s.student_no}</td><td><div class="row" style="gap:4px;flex-wrap:nowrap"><input type="text" id="nm-${s.student_no}" value="${attr(s.student_name)}" style="width:130px;padding:4px 8px"><button class="btn ghost sm" onclick="Te.renameStudent(${s.student_no}, this)">저장</button></div></td><td>${s.has_pin ? '설정됨' : '<b>초기화됨</b>'}</td>
         <td>${fmtTime(s.last_seen)}</td><td>${s.submissions}</td>
         <td class="row" style="gap:6px"><button class="btn ghost sm" onclick="Te.resetPin(${s.student_no}, this)">PIN 초기화</button>
           <button class="btn red sm" onclick="Te.delStudent(${s.student_no}, this)">삭제</button></td></tr>`).join('') || '<tr><td colspan="6">아직 입장한 학생이 없어요.</td></tr>'}
       </tbody></table></div></section>`;
+  },
+  async renameStudent(no, btn) {
+    const name = val(`nm-${no}`).trim();
+    if (!name) { toast('이름을 적어 주세요.', true); return; }
+    await busy(btn, async () => { await rpc('teacher_rename_student', this.a({ p_target: this.target, p_no: no, p_name: name })); toast(`${no}번 이름을 "${name}"(으)로 바꿨어요.`); });
   },
   async resetPin(no, btn) {
     if (!confirm(`${no}번 학생의 PIN을 초기화할까요?`)) return;
@@ -1763,23 +1784,49 @@ const Te = {
   async renderBoard(v) {
     v.innerHTML = '<section class="panel"><p><span class="spin"></span> 불러오는 중…</p></section>';
     try {
-      const all = await rpc('teacher_submissions', this.a({ p_target: this.target }));
+      const [all, students] = await Promise.all([
+        rpc('teacher_submissions', this.a({ p_target: this.target })),
+        rpc('teacher_students', this.a({ p_target: this.target })),
+      ]);
+      this._allSubs = all; this._students = students;
       this._board = all.filter((x) => x.posted).sort((a, b) => String(b.posted_at).localeCompare(String(a.posted_at)));
       this._urls = await signedUrls(this._board);
     } catch (e) { v.innerHTML = `<div class="alert">${esc(e.message)}</div>`; return; }
-    const units = [...new Set(this._board.map((x) => x.unit_name))];
-    const cur = units.includes(this.cur().unit_name) ? this.cur().unit_name : '__all';
+    const units = [...new Set(this._allSubs.map((x) => x.unit_name).concat(this.cur().unit_name ? [this.cur().unit_name] : []))];
+    const keep = this._bdSel && units.includes(this._bdSel) ? this._bdSel : null;
+    const cur = keep || (units.includes(this.cur().unit_name) ? this.cur().unit_name : units[0] || '');
     v.innerHTML = `<section class="panel row" style="padding:10px 18px">
         <h2 class="grow" style="margin:0">🖼️ ${esc(clsLabel(this.cur()))} 게시판</h2>
-        <span class="small">학생들이 보는 게시판과 같아요. 선생님은 모든 글을 고치거나 지울 수 있어요.</span>
-        <select id="bdUnit" style="width:auto" onchange="Te.drawBoard()" aria-label="단원 고르기"><option value="__all">모든 단원</option>
+        <select id="bdUnit" style="width:auto" onchange="Te.drawBoard()" aria-label="단원 고르기">
           ${units.map((u) => `<option value="${attr(u)}" ${u === cur ? 'selected' : ''}>${esc(u || '단원 없음')}</option>`).join('')}</select>
-      </section><div id="board"></div>`;
+        <button class="btn ghost" onclick="Te.renderBoard($('#tview'))">🔄 새로고침</button>
+      </section>
+      <section class="panel" id="roster"></section>
+      <div id="board"></div>`;
     this.drawBoard();
   },
+  // 게시 현황: 올림(초록) / 첨삭까지만(노랑) / 아직 시작 안 함(회색)
+  drawRoster(u) {
+    const box = $('#roster'); if (!box) return;
+    const subs = this._allSubs.filter((x) => x.unit_name === u);
+    const st = this._students.map((s) => {
+      const mine = subs.filter((x) => x.student_no === s.student_no);
+      const posted = mine.filter((x) => x.posted);
+      return { ...s, state: posted.length ? 'ok' : mine.length ? 'mid' : 'no', modes: posted.map((x) => x.write_mode) };
+    });
+    const n = (k) => st.filter((x) => x.state === k).length;
+    const expected = this.cur().expected_students || 0;
+    const notEntered = expected > st.length ? expected - st.length : 0;
+    box.innerHTML = `<div class="row"><h3 class="grow" style="margin:0">📋 게시 현황 <span class="small">${esc(u || '')}</span></h3>
+        <span class="rs rs-ok">✅ 올림 ${n('ok')}명</span><span class="rs rs-mid">✏️ 첨삭까지 ${n('mid')}명</span><span class="rs">⬜ 아직 ${n('no')}명</span>
+        ${notEntered ? `<span class="small">+ 입장 안 한 학생 ${notEntered}명 (예상 ${expected}명)</span>` : ''}</div>
+      <div class="roster">${st.map((s) => `<span class="rs ${s.state === 'ok' ? 'rs-ok' : s.state === 'mid' ? 'rs-mid' : ''}" title="${s.state === 'ok' ? '게시판에 올림' : s.state === 'mid' ? '첨삭은 받았지만 아직 안 올림' : '아직 첨삭을 받지 않음'}">${s.student_no}. ${esc(s.student_name)}${s.modes.map((m) => m === 'slow' ? ' 🐢' : ' 🚀').join('')}</span>`).join('') || '<span class="small">아직 입장한 학생이 없어요.</span>'}</div>
+      <p class="small" style="margin:8px 0 0">🚀 바로 쓰기로 올림, 🐢 천천히 쓰기로 올림. 이름이 잘못됐으면 교사 관리 → 학생 관리에서 고칠 수 있어요.</p>`;
+  },
   drawBoard() {
-    const u = val('bdUnit');
-    const list = this._board.filter((x) => u === '__all' || x.unit_name === u);
+    const u = val('bdUnit'); this._bdSel = u;
+    this.drawRoster(u);
+    const list = this._board.filter((x) => x.unit_name === u);
     $('#board').innerHTML = list.length ? `<div class="gallery">${list.map((x) => `
       <article class="card">
         ${photoHtml(x, this._urls)}

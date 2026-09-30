@@ -32,21 +32,35 @@ async function rpc(name, args) {
 }
 
 // ---------- Gemini ----------
-async function gemini(keys, { system, contents, asJson, models = MODELS }) {
-  if (!keys || !keys.length) throw new Error('학급에 등록된 AI 키가 없어요. 선생님께 알려 주세요.');
-  const start = Math.floor(Math.random() * keys.length);
-  const order = keys.map((_, i) => keys[(start + i) % keys.length]);
-  const deadline = Date.now() + 9300; // 넷리파이 무료 함수는 10초 안에 끝나야 해요
-  let modelErr = '';  // 모델이 없어졌다는 오류
-  let otherErr = '';  // 키·사용량 등 더 중요한 오류
-  const isModelGone = (status, msg) => status === 404 || /not found|not supported for|no longer available|deprecated|is not found/i.test(msg);
+// 서버가 켜져 있는 동안 기억해 두는 것들 (수업 중 반복 요청을 빠르게)
+const workingModel = {};         // 목록별로 마지막에 성공한 모델 → 다음엔 바로 그 모델부터
+const goneModels = new Set();    // 없어진 모델은 다시 시도하지 않음
+const noThinking = new Set();    // 생각 설정을 받지 않는 모델
+const keyCooldown = new Map();   // 사용량 초과(429)가 난 키는 잠시 쉬게 함
 
-  for (const model of models) {
-    let thinking = true; // 생각 설정이 안 맞는 모델이면 빼고 한 번 더
+// keys: 배열(무료 키만) 또는 { free: [...], paid: [...] }
+// 무료 키를 먼저 번갈아 쓰고, 무료 키가 모두 막히거나 쉬는 중일 때만 유료 키를 써요.
+async function gemini(keys, { system, contents, asJson, models = MODELS }) {
+  const free = Array.isArray(keys) ? keys : (keys?.free || []);
+  const paid = Array.isArray(keys) ? [] : (keys?.paid || []);
+  if (!free.length && !paid.length) throw new Error('학급에 등록된 AI 키가 없어요. 선생님께 알려 주세요.');
+  const listKey = models.join('|');
+  const now = Date.now();
+  const restedFree = free.filter(k => (keyCooldown.get(k) || 0) < now);
+  const freePool = restedFree.length ? restedFree : (paid.length ? [] : free);
+  const start = Math.floor(Math.random() * Math.max(1, freePool.length));
+  const order = [...freePool.map((_, i) => freePool[(start + i) % freePool.length]), ...paid];
+  const tryModels = [...new Set([workingModel[listKey], ...models].filter(Boolean))].filter(m => !goneModels.has(m));
+  const deadline = Date.now() + 9300; // 넷리파이 무료 함수는 10초 안에 끝나야 해요
+  let modelErr = '', otherErr = '';
+  const isModelGone = (status, msg) => status === 404 || /not found|not supported for|no longer available|deprecated/i.test(msg);
+
+  for (const model of tryModels) {
     for (let k = 0; k < order.length; k++) {
       const key = order[k];
       const left = deadline - Date.now();
-      if (left < 1500) throw new Error(otherErr ? `AI 응답을 받지 못했어요. (${otherErr})` : 'AI 응답이 늦어요. 잠시 뒤 다시 눌러 주세요.');
+      if (left < 1200) throw new Error(otherErr ? `AI 응답을 받지 못했어요. (${otherErr})` : 'AI 응답이 늦어요. 잠시 뒤 다시 눌러 주세요.');
+      const thinking = noThinking.has(model) ? null : { thinkingLevel: /lite/.test(model) ? 'minimal' : 'low' };
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), left);
       try {
@@ -59,20 +73,21 @@ async function gemini(keys, { system, contents, asJson, models = MODELS }) {
             contents,
             generationConfig: {
               ...(asJson ? { responseMimeType: 'application/json' } : {}),
-              ...(thinking ? { thinkingConfig: { thinkingLevel: 'low' } } : {}), // 빠르게 답하도록 생각은 짧게
+              ...(thinking ? { thinkingConfig: thinking } : {}), // 빠르게 답하도록 생각은 최소로
             },
           }),
         });
         const data = await r.json().catch(() => ({}));
         if (r.ok) {
           const text = (data.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim();
-          if (text) return text;
+          if (text) { workingModel[listKey] = model; return text; }
           otherErr = 'AI가 빈 답을 보냈어요.';
           continue;
         }
         const msg = data.error?.message || String(r.status);
-        if (thinking && r.status === 400 && /thinking/i.test(msg)) { thinking = false; k--; continue; }
-        if (isModelGone(r.status, msg)) { modelErr = `${model}: ${msg}`; break; } // 다음 모델로
+        if (thinking && r.status === 400 && /thinking/i.test(msg)) { noThinking.add(model); k--; continue; }
+        if (isModelGone(r.status, msg)) { goneModels.add(model); modelErr = `${model}: ${msg}`; break; }
+        if (r.status === 429 || /quota|exhausted|rate/i.test(msg)) keyCooldown.set(key, Date.now() + 60000);
         otherErr = msg; // 키 문제·사용량 초과 → 다음 키로
       } catch (e) {
         otherErr = e.name === 'AbortError' ? 'AI 응답이 너무 오래 걸려요.' : e.message;
@@ -85,7 +100,7 @@ async function gemini(keys, { system, contents, asJson, models = MODELS }) {
     throw new Error('AI 키가 맞지 않아요. 키를 끝까지 복사했는지 확인해 주세요. (' + otherErr.slice(0, 160) + ')');
   }
   if (/quota|rate|exhausted|429/i.test(otherErr)) {
-    throw new Error('오늘 AI 사용량이 다 찼어요. 다른 구글 계정의 키를 더 등록하면 나눠 쓸 수 있어요.');
+    throw new Error('지금 AI 사용량이 몰렸어요. 10초쯤 뒤 다시 눌러 주세요. (다른 구글 계정의 키를 더 등록하면 나눠 쓸 수 있어요.)');
   }
   throw new Error(otherErr || modelErr || 'AI 응답을 받지 못했어요.');
 }
@@ -166,7 +181,7 @@ async function taskDefine(ctx, p) {
 }
 
 async function taskChat(ctx, p) {
-  const history = (p.history || []).slice(-24);
+  const history = (p.history || []).slice(-14);
   const turn = history.filter(m => m.role === 'user').length;
   const maxTurns = 6;
   const system = `너는 초등학생과 영어로 대화하며 글쓰기를 준비시키는 친절한 AI 선생님이다.
@@ -377,6 +392,7 @@ exports.handler = async (event) => {
     if (p.action === 'photo_track') return json(200, await photoTrack(p));
 
     const ctx = await rpc('svc_ai_context', { p_code: p.class_code, p_no: Number(p.student_no), p_pin: p.pin });
+    ctx.keys = { free: ctx.keys || [], paid: ctx.paid_keys || [] };
     switch (p.action) {
       case 'words': return json(200, await taskWords(ctx));
       case 'lookup': return json(200, await taskLookup(ctx, p));
