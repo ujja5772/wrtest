@@ -82,6 +82,7 @@ async function gemini(keys, { system, contents, asJson, models = MODELS }) {
         const data = await r.json().catch(() => ({}));
         if (r.ok) {
           const text = (data.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim();
+          if (text && asJson) { try { parseJson(text); } catch { otherErr = 'AI 답 형식이 맞지 않아요.'; break; } } // 형식이 틀리면 다음 모델로 다시 시도
           if (text) { workingModel[listKey] = model; return text; }
           otherErr = 'AI가 빈 답을 보냈어요.';
           continue;
@@ -110,10 +111,25 @@ async function gemini(keys, { system, contents, asJson, models = MODELS }) {
 }
 
 function parseJson(text) {
-  const clean = String(text).replace(/```json|```/g, '').trim();
-  const s = clean.indexOf('{');
-  const e = clean.lastIndexOf('}');
-  return JSON.parse(s >= 0 ? clean.slice(s, e + 1) : clean);
+  // AI가 JSON 앞뒤에 다른 글을 붙이거나, JSON을 두 덩어리로 보내도 읽어 내요
+  const clean = String(text).replace(/\x60\x60\x60json|\x60\x60\x60/g, '').trim();
+  try { return JSON.parse(clean); } catch {}
+  const objs = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < clean.length; i++) {
+    const c = clean[i];
+    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === '{') { if (depth++ === 0) start = i; }
+    else if (c === '}' && depth > 0 && --depth === 0) { try { objs.push(JSON.parse(clean.slice(start, i + 1))); } catch {} }
+  }
+  if (!objs.length) throw new Error('AI 답을 읽지 못했어요. 다시 눌러 주세요.');
+  const out = objs[0];
+  for (const o of objs.slice(1)) for (const [k, v] of Object.entries(o)) { // 여러 덩어리면 목록을 합쳐요
+    if (Array.isArray(out[k]) && Array.isArray(v)) out[k] = out[k].concat(v);
+    else if (out[k] === undefined) out[k] = v;
+  }
+  return out;
 }
 
 // 학생이 키보드로 칠 수 없는 둥근 따옴표·긴 대시 등을 일반 글자로 바꿈
