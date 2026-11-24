@@ -64,7 +64,7 @@ async function gemini(keys, { system, contents, asJson, models = MODELS }) {
       if (left < 1200) throw new Error(otherErr ? `AI 응답을 받지 못했어요. (${otherErr})` : 'AI 응답이 늦어요. 잠시 뒤 다시 눌러 주세요.');
       const thinking = noThinking.has(model) ? null : { thinkingLevel: 'low' };
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), left);
+      const timer = setTimeout(() => ctrl.abort(), Math.min(left, 4000)); // 한 번에 최대 4초만 기다리고 다음으로
       try {
         const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
           method: 'POST',
@@ -89,10 +89,12 @@ async function gemini(keys, { system, contents, asJson, models = MODELS }) {
         const msg = data.error?.message || String(r.status);
         if (thinking && r.status === 400 && /thinking/i.test(msg)) { noThinking.add(model); k--; continue; }
         if (isModelGone(r.status, msg)) { goneModels.add(model); modelErr = `${model}: ${msg}`; break; }
+        if (r.status === 503 || r.status === 500 || /high demand|overloaded|unavailable/i.test(msg)) { otherErr = msg; break; } // 모델이 붐비면 다른 키 말고 다음 모델로
         if (r.status === 429 || /quota|exhausted|rate/i.test(msg)) keyCooldown.set(key, Date.now() + 60000);
         otherErr = msg; // 키 문제·사용량 초과 → 다음 키로
       } catch (e) {
         otherErr = e.name === 'AbortError' ? 'AI 응답이 너무 오래 걸려요.' : e.message;
+        if (e.name === 'AbortError') break; // 느린 모델은 건너뛰고 다음 모델로
       } finally {
         clearTimeout(timer);
       }
@@ -101,7 +103,7 @@ async function gemini(keys, { system, contents, asJson, models = MODELS }) {
   if (/API key|API_KEY|permission|unauthori|invalid authentication|credentials/i.test(otherErr)) {
     throw new Error('AI 키가 맞지 않아요. 키를 끝까지 복사했는지 확인해 주세요. (' + otherErr.slice(0, 160) + ')');
   }
-  if (/quota|rate|exhausted|429/i.test(otherErr)) {
+  if (/quota|rate|exhausted|429|high demand|overloaded|unavailable|너무 오래/i.test(otherErr)) {
     throw new Error('지금 AI 사용량이 몰렸어요. 10초쯤 뒤 다시 눌러 주세요. (다른 구글 계정의 키를 더 등록하면 나눠 쓸 수 있어요.)');
   }
   throw new Error(otherErr || modelErr || 'AI 응답을 받지 못했어요.');
