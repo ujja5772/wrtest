@@ -251,6 +251,7 @@ ${classBlock(ctx)}
 - 학생이 말하지 않은 사실을 지어내지 않는다. 학생이 말한 것을 다른 것으로 바꾸지 않는다.
 - 한 문장에 서로 다른 주제(예: 음식과 동물)를 섞지 않는다.
 - 핵심 표현이 있으면 반드시 그 표현을 쓴 문장을 포함한다. 핵심 표현 안의 괄호 ( ) 부분은 빈칸(____)으로 바꾼다.
+- 모든 문장에는 빈칸(____)이 반드시 1개 이상 있어야 한다. 정답 낱말을 문장 안에 미리 써 넣지 말고 빈칸으로 남긴다.
 - 단, 질문(? 로 끝나는 문장)과 "I have no idea." 같은 대화용 표현은 문장으로 만들지 않는다. 모든 문장은 학생이 "나"의 입장에서 쓰는 평서문이다(예: "What do you want to do this winter?" 대신 "This winter, I want to ____.").
 - 같은 표현이나 같은 답을 쓴 문장은 하나만 남긴다.
 - 빈칸에는 학생이 대화에서 말한 낱말이 들어가게 하고, 그 낱말을 answer에 적는다(한국어로 말했으면 실제로 쓰는 영어 표현, 예: 인형뽑기 → claw machine).
@@ -265,7 +266,15 @@ ${classBlock(ctx)}
   const sentences = (out.sentences || [])
     .filter(s => s && typeof s.template === 'string')
     .map(s => ({ template: plain(s.template).replace(/_{2,}/g, '____'), answer: Array.isArray(s.answer) ? s.answer.map(plain) : [], ko: s.ko || '' }))
+    .map(s => { // AI가 빈칸 없이 정답을 써 넣었으면 정답 부분을 빈칸으로 바꿔요
+      if (s.template.includes('____')) return s;
+      let t = s.template;
+      for (const a of s.answer) { const w = a.trim(); if (!w) continue; const i = t.toLowerCase().lastIndexOf(w.toLowerCase()); if (i >= 0) t = t.slice(0, i) + '____' + t.slice(i + w.length); }
+      return { ...s, template: t };
+    })
+    .filter(s => s.template.includes('____'))
     .slice(0, 12);
+  if (!sentences.length && !p._retry) return taskHint(ctx, { ...p, _retry: true }); // 빈 답이면 한 번 더
   return { sentences };
 }
 
